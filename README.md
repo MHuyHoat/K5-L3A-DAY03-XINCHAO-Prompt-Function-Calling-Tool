@@ -1,4 +1,4 @@
-# Day 04 Lab v2 — Research Agent Tool Eval
+# Day 03 Lab v2 — Research Agent Tool Eval
 
 ## Brief
 
@@ -23,6 +23,7 @@ Nhiệm vụ bắt buộc:
 - Tối ưu ít nhất 3 vòng sau baseline: `v1`, `v2`, `v3`.
 - Ghi `artifacts/version_log.csv`.
 - Viết thêm ít nhất 1 tool mới (kèm `TOOL.md`, đăng ký trong `tools/__init__.py` và `tools.yaml`).
+- Viết unit test cho tool mới (≥ 3 test/tool) và giữ `pytest` xanh — xem [Step 4b](#step-4b--challenge-viết-test-cho-tool).
 - Tự viết thêm 10 eval case vào `data/eval_group.json`, trong đó 5 single turn và 5 multi turn.
 - Nộp run JSON, transcript JSON, report.
 - Bắt buộc có UI chạy được bằng Streamlit hoặc Vercel.
@@ -32,9 +33,49 @@ Bonus:
 
 - Action tool `send`: có confirmation trước khi gửi.
 - Extra tools: `policy`, `papers`, `paper_text`.
+- **Small Local Model Challenge**: chạy agent bằng model local nhỏ (≤ 8B) qua Ollama — xem [Step 7](#step-7--bonus-challenge-small-local-model).
 
 
 **Điểm thưởng (bonus point):** team nào làm **CẢ HAI** — dựng được UI **và** tự viết thêm hơn 3 tool mới (ngoài các tool có sẵn, kèm `TOOL.md` + đăng ký trong `tools/__init__.py` + `tools.yaml`) — sẽ được cộng điểm thưởng.
+
+## TODO Checklist
+
+Đánh dấu khi xong. Mỗi dòng trỏ tới file cần sửa và bằng chứng cần nộp.
+
+**Setup**
+- [ ] `.env` có provider key + `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `RAPIDAPI_KEY`
+- [ ] `python scripts/preflight_provider.py --provider openrouter` pass
+- [ ] `pytest` chạy được: contract test + example test xanh, TODO test đang `skipped`
+
+**Prompt & tool declaration**
+- [ ] Chạy baseline `v0`, ghi vào `artifacts/version_log.csv`
+- [ ] Liệt kê các case FAIL của `v0` và gán mỗi case một loại lỗi (`wrong_tool`, `wrong_arg_value`, `missing_info`...)
+- [ ] `artifacts/system_prompt.md`: bỏ các chỉ dẫn xấu cố ý của starter (đoán thay vì hỏi, gửi không cần xác nhận, ép một bước)
+- [ ] `artifacts/system_prompt.md`: thêm rule routing (khi nào `timeline` / `social_search` / `lookup` / `fetch` / `clarify`)
+- [ ] `artifacts/tools.yaml`: viết lại `description` mỗi tool: làm gì, **khi nào dùng / khi nào không dùng**
+- [ ] `artifacts/tools.yaml`: mô tả rõ convention args (handle không có `@`, `topic=news` cho tin tức, `timeframe`, `search_type=Top|Latest`)
+- [ ] `artifacts/tools.yaml`: `send` mô tả rõ chỉ gửi khi user đã xác nhận (`confirmed=true`)
+- [ ] `v1`, `v2`, `v3`: mỗi version **một** giả thuyết, metric trước/sau trong `version_log.csv`
+
+**Tool mới**
+- [ ] `tools/<tên>/tool.py` + `TOOL.md` (frontmatter đúng contract trong `tools/README.md`)
+- [ ] Đăng ký trong `tools/__init__.py` (`TOOL_FUNCTIONS`) và `artifacts/tools.yaml`
+- [ ] Unit test cho tool mới trong `tests/test_tools_todo.py` (≥ 3 test)
+- [ ] Ít nhất 1 eval case trong `data/eval_group.json` kiểm tra model có route tới tool mới đúng lúc
+
+**Testing**
+- [ ] `data/eval_group.json`: case cho model (routing / args / boundary), xem Step 4
+- [ ] `tests/test_tools_todo.py`: unit test cho code của tool, xem Step 4b
+- [ ] `pytest`: 0 failed, 0 skipped
+
+**Demo & report**
+- [ ] UI chạy được + link dùng thử
+- [ ] `chat.py`: ≥ 3 lượt live, có transcript
+- [ ] `artifacts/REPORT.md` Phần A trước 16:30, Phần B trước khi nộp
+
+**Bonus (tuỳ chọn)**
+- [ ] `send` có xác nhận trước khi gửi, có transcript chứng minh
+- [ ] Small Local Model Challenge (Step 7)
 
 ## Folder Map
 
@@ -44,6 +85,12 @@ starter_v0/
   chat.py                     # interactive chat, multi-round tools, transcript JSON
   run_eval.py                 # eval routing + args, writes runs/*.json
   versioning.py               # prompt/tool hash
+  pytest.ini
+  tests/
+    conftest.py               # offline fixtures: block real network, fake_http, clean env
+    test_tool_contract.py     # tools.yaml <-> code <-> eval stay in sync (given, keep green)
+    test_tools_examples.py    # worked examples to copy
+    test_tools_todo.py        # TODO(student): tool unit test challenge
   artifacts/
     system_prompt.md          # student edits
     tools.yaml                # student edits
@@ -59,7 +106,7 @@ starter_v0/
       TOOL.md                 # frontmatter + notes
       tool.py                 # self-contained implementation
   company_policy/             # local markdown KB for bonus policy tool
-  providers/                  # OpenRouter/OpenAI/Anthropic/Gemini adapters
+  providers/                  # OpenRouter/OpenAI/Anthropic/Gemini/Ollama (local) adapters
   scripts/preflight_provider.py
   samples/                    # mock format examples (transcript, run-analysis, version_log)
 ```
@@ -226,6 +273,29 @@ python run_eval.py \
   --eval-cases data/eval_research_extension.json
 ```
 
+## Step 4b — Challenge: Viết test cho tool
+
+Eval ở Step 4 đo **model** (chọn tool và args có đúng không). Unit test ở đây đo **code của tool** (nhận args đó thì có chạy đúng không). Hai loại lỗi này khác nhau: model gọi đúng `lookup(topic="news")` nhưng tool quên gửi `topic` lên API thì eval vẫn báo PASS, còn user vẫn nhận kết quả sai.
+
+```bash
+pytest              # toàn bộ suite, offline, không tốn credit API
+pytest -v tests/test_tools_todo.py
+```
+
+Có sẵn:
+
+- `tests/test_tool_contract.py`: kiểm tra `tools.yaml` khớp với code. Mỗi tool khai báo phải có implementation, mọi param khai báo phải có trong signature hàm, có `TOOL.md` đúng tên, eval chỉ dùng tool đã khai báo. Test này phải luôn xanh, chạy lại mỗi khi rename hay thêm tool.
+- `tests/test_tools_examples.py`: 5 mẫu để copy: tool local thuần, guardrail (`send` không gửi khi chưa xác nhận), mock HTTP cho tool gọi API, nhánh lỗi (thiếu key, HTTP 429), và test vòng lặp agent bằng fake provider không cần model.
+- `tests/conftest.py`: mọi HTTP thật đều bị chặn, phải mock bằng fixture `fake_http`. Các env key bị xoá trước mỗi test.
+
+Nhiệm vụ:
+
+1. **Bắt buộc:** viết ≥ 3 test cho mỗi tool mới của nhóm (happy path; input xấu từ model như chuỗi rỗng, sai kiểu, ngoài enum; nhánh lỗi trả error dict chứ không raise).
+2. **Challenge:** điền hết các stub `pytest.skip(TODO)` trong `tests/test_tools_todo.py` (clarify, format, send, lookup, fetch, timeline, social_search, policy). Đạt khi `pytest` báo **0 failed, 0 skipped**.
+3. **Challenge+:** nếu test phát hiện bug trong tool có sẵn, ghi lại bug đó, sửa nó, và giữ lại test đã bắt được bug (regression test). Ghi vào REPORT B5. Gợi ý: thử input biên mà model hay gửi, như `limit=0`, `top_k=0`, số dạng chuỗi (`max_results="5"`), `items` thiếu `url`, rồi tự quyết định hành vi hiện tại có đúng mong đợi không.
+
+Nguyên tắc: một test kiểm tra một hành vi, tên test mô tả hành vi đó (`test_send_without_confirmation_does_not_call_network`), và assert cả **request gửi đi** lẫn **kết quả trả về**.
+
 ## Step 5 — Chat Live
 
 `chat.py` is for live multi-round interaction. It logs every turn to `transcripts/*.transcript.json`.
@@ -279,6 +349,61 @@ Hoàn thành `artifacts/REPORT.md`. File này có 2 phần với deadline khác 
 
 **Format Phần A:** nộp tối thiểu bản markdown trong `REPORT.md`. Khuyến khích biến Phần A thành **poster HTML/SVG 1 trang** để show trực tiếp cho team cùng zone (ví dụ `artifacts/poster.html` hoặc `artifacts/poster.svg`) — cùng nội dung, dễ nhìn hơn. Poster HTML/SVG là tùy chọn, không thay thế bản markdown.
 
+## Step 7 — Bonus Challenge: Small Local Model
+
+Câu hỏi: **prompt + tool declaration nhóm vừa tối ưu cho model cloud có còn đúng khi chạy model nhỏ trên máy mình không?** Model nhỏ (3B–8B) chạy offline, không tốn tiền, dữ liệu không rời máy, nhưng gọi tool kém hơn rõ: chọn sai tool, JSON arguments lỗi, bịa tool không có, gọi lặp, hoặc trả lời luôn thay vì gọi `clarify`. Bài này đo khoảng cách đó bằng log thật rồi tìm cách thu hẹp nó.
+
+### Setup
+
+1. Cài [Ollama](https://ollama.com/download) (`brew install ollama` trên macOS), rồi chạy `ollama serve` (app desktop tự chạy sẵn).
+2. Kéo **ít nhất 2** model hỗ trợ tool calling, có kích thước khác nhau:
+
+   ```bash
+   ollama pull qwen2.5:7b      # mặc định của provider, ~4.7 GB
+   ollama pull llama3.2:3b     # nhỏ hơn, ~2 GB
+   # Gợi ý khác: qwen2.5:3b, llama3.1:8b, mistral:7b
+   # Model phải có tag "tools" trên https://ollama.com/search?c=tools
+   ```
+
+   Máy yếu (RAM < 16 GB): dùng model 3B. Không cần API key; provider `ollama` gọi `http://localhost:11434/v1` (đổi bằng `OLLAMA_BASE_URL` nếu dùng LM Studio / llama.cpp server).
+
+3. Preflight:
+
+   ```bash
+   python scripts/preflight_provider.py --provider ollama --model qwen2.5:7b
+   ```
+
+### Nhiệm vụ
+
+1. **Baseline local:** chạy base eval với prompt/tools **v3** (bản tốt nhất của nhóm), không sửa gì, trên từng model local:
+
+   ```bash
+   python run_eval.py --provider ollama --model qwen2.5:7b  --version v3-qwen7b --suite base --eval-cases data/eval_base.json
+   python run_eval.py --provider ollama --model llama3.2:3b --version v3-llama3b --suite base --eval-cases data/eval_base.json
+   ```
+
+2. **Phân loại lỗi:** đọc run JSON, đếm lỗi đặc thù của model nhỏ mà model cloud không mắc:
+   - `wrong_tool` / bịa tên tool không có trong `tools.yaml`
+   - arguments JSON lỗi: provider giữ lại raw text trong `args._invalid_json_arguments`, nên vẫn tính là lỗi arg, không biến thành `provider_error`
+   - không gọi tool (trả text thay vì tool call), hoặc gọi tool khi lẽ ra phải `clarify`
+   - gọi thừa / lặp cùng một tool
+
+3. **Tối ưu cho model nhỏ:** ít nhất **2 vòng** (`v4-local`, `v5-local`), mỗi vòng một giả thuyết, như Step 2. Hướng gợi ý (không bắt buộc):
+   - Rút gọn system prompt; model nhỏ dễ "lạc" với prompt dài.
+   - Viết `description` của tool ngắn, cụ thể, có ví dụ args; bớt field optional.
+   - Thêm 1–2 ví dụ few-shot routing trong prompt.
+   - Bỏ tool không cần cho suite đang chạy để giảm nhiễu lựa chọn.
+
+   Có thể dùng bản prompt/tools riêng cho local qua `--system-prompt` / `--tools` (ví dụ `artifacts/system_prompt_local.md`) để không phá bản v3 của model cloud.
+
+4. **Kiểm tra ngược:** chạy lại bản `v5-local` trên model cloud. Điểm có giảm không? Có tìm được một bản prompt dùng tốt cho cả hai không?
+
+5. Ghi mọi run vào `artifacts/version_log.csv` (ghi rõ model trong cột `reason` hoặc `version`), và điền mục **B7** trong `REPORT.md`.
+
+Lưu ý: model local chậm hơn nhiều (vài giây đến vài chục giây mỗi case). Chạy thử 3–5 case trước bằng một file eval nhỏ nếu máy yếu. Ollama có thể bỏ qua `tool_choice="required"`, nên model local có thể không gọi tool ở case bắt buộc phải gọi; đó là một lỗi cần đo, không phải bug của harness.
+
+**Tiêu chí đạt:** ≥ 2 model local đã chạy base eval, ≥ 2 vòng tối ưu có log, bảng so sánh cloud vs local trong REPORT, và ít nhất một kết luận có bằng chứng về việc "cái gì giúp model nhỏ gọi tool đúng hơn".
+
 ## Submit
 
 Submit `starter_v0/` with:
@@ -289,10 +414,12 @@ Submit `starter_v0/` with:
 - `artifacts/REPORT.md` (Phần A debate poster — xong trước 16:30; Phần B chi tiết — nộp sau)
 - `artifacts/poster.html` hoặc `artifacts/poster.svg` nếu team làm poster để debate (tùy chọn)
 - `data/eval_group.json` with at least 5 team cases
+- `tests/` (unit test cho tool mới; nếu làm challenge thì `test_tools_todo.py` không còn `skip`)
 - `runs/*.json`
 - `analysis/*.csv` if you parsed run logs
 - `transcripts/*.transcript.json`
 - code changes if your team added or changed tools/UI
+- nếu làm Small Local Model Challenge: run JSON của model local và prompt/tools riêng cho local (nếu có)
 
 Do not submit `.env` or API keys.
 
